@@ -189,13 +189,16 @@ class CameraDaemon:
                 self.process_file(file_path)
         self.log_info(f"Finished processing device at {mount_path}")
 
-    def handle_event(self, action, device):
+    def handle_event(self, device):
         """
         Handle device plug/unplug events.
         """
         if self.shutdown_event.is_set():
             self.log_info("Shutdown event detected. Ignoring new device events.")
             return
+
+        action = device.action
+        self.log_info(f"Device event: {action} for device {device.device_path}")
 
         if action == 'add':
             self.log_info(f"Device added: {device}")
