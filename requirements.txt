@@ -2,3 +2,5 @@ Pillow
 exifread
 moviepy
 pyudev
+gphoto2
+pymtp
