@@ -268,7 +268,10 @@ Contributions are welcome! Please open an issue or submit a pull request for any
 
 ## 📜 License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the GNU General Public License v3.0 (GPLv3).
+
+You are free to use, modify, and distribute this software under the terms of the GPLv3. For more details, please refer 
+to the LICENSE file included in this repository.
 
 ## 📞 Contact
 
