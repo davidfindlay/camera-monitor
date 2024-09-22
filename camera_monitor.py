@@ -8,13 +8,14 @@ import threading
 import logging
 import configparser
 import signal
-import sys
 from datetime import datetime
 from pathlib import Path
 from PIL import Image
 import exifread
 from moviepy.editor import VideoFileClip
 import pyudev
+import gphoto2 as gp
+import pymtp
 
 class CameraDaemon:
     def __init__(self, config_path):
@@ -80,22 +81,18 @@ class CameraDaemon:
     def log_error(self, message):
         logging.error(message)
 
-    def get_device_mount_path(self, device):
-        """
-        Get the mount point of the device.
-        """
-        for part in device.mount_points:
-            return Path(part)
-        return None
-
     def is_camera(self, device):
         """
         Determine if the device is a camera based on PTP or MTP capability.
+        Returns:
+            ('ptp') if PTP device,
+            ('mtp') if MTP device,
+            None otherwise.
         """
         # Primary Check for PTP: Look for 'ID_PTP_DEVICE' property
         if 'ID_PTP_DEVICE' in device.properties:
             self.log_info(f"Device {device.device_path} identified as a PTP device via 'ID_PTP_DEVICE'.")
-            return True
+            return 'ptp'
 
         # Secondary Check for PTP: Parse 'ID_USB_INTERFACES' for Image class with PTP protocols
         usb_interfaces = device.properties.get('ID_USB_INTERFACES')
@@ -112,12 +109,12 @@ class CameraDaemon:
                     # Image class is 0x06, PTP protocols are 0x01 or 0x02
                     if iface_class == '06' and iface_protocol in ['01', '02']:
                         self.log_info(f"Device {device.device_path} identified as a PTP device via USB interfaces.")
-                        return True
+                        return 'ptp'
 
         # Primary Check for MTP: Look for 'ID_MEDIA_PLAYER' property
         if 'ID_MEDIA_PLAYER' in device.properties:
             self.log_info(f"Device {device.device_path} identified as an MTP device via 'ID_MEDIA_PLAYER'.")
-            return True
+            return 'mtp'
 
         # Secondary Check for MTP: Parse 'ID_USB_INTERFACES' for Media class with MTP protocols
         if usb_interfaces:
@@ -132,104 +129,100 @@ class CameraDaemon:
                     # Media class is 0x0E, MTP protocols are typically 0x01 or 0x02
                     if iface_class == '0E' and iface_protocol in ['01', '02']:
                         self.log_info(f"Device {device.device_path} identified as an MTP device via USB interfaces.")
-                        return True
+                        return 'mtp'
 
         self.log_info(f"Device {device.device_path} is not identified as a PTP or MTP camera.")
-        return False
-
-    def extract_exif_date(self, file_path):
-        """
-        Extract the original date from image EXIF data.
-        """
-        try:
-            with open(file_path, 'rb') as f:
-                tags = exifread.process_file(f, stop_tag="EXIF DateTimeOriginal")
-                date_tag = tags.get("EXIF DateTimeOriginal")
-                if date_tag:
-                    date_str = str(date_tag)
-                    return datetime.strptime(date_str, "%Y:%m:%d %H:%M:%S").date()
-        except Exception as e:
-            self.log_error(f"Error extracting EXIF data from {file_path}: {e}")
         return None
 
-    def process_image(self, file_path):
+    def process_ptp_device(self, device):
         """
-        Process image: copy to destination directory organized by date.
-        """
-        date = self.extract_exif_date(file_path)
-        if not date:
-            date = datetime.now().date()
-        date_dir = self.incoming_dir / date.strftime("%Y-%m-%d")
-        date_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            shutil.copy2(file_path, date_dir)
-            self.log_info(f"Copied image {file_path} to {date_dir}")
-        except Exception as e:
-            self.log_error(f"Failed to copy image {file_path} to {date_dir}: {e}")
-
-    def process_video(self, file_path):
-        """
-        Process video: copy to destination directory organized by date and extract screenshots.
+        Process PTP device: download files using python-gphoto2.
         """
         try:
-            # Get video creation date
-            date = self.extract_exif_date(file_path)
-            if not date:
-                date = datetime.now().date()
-            date_dir = self.incoming_dir / date.strftime("%Y-%m-%d")
-            screencap_dir = date_dir / "screencaps"
-            screencap_dir.mkdir(parents=True, exist_ok=True)
-            # Copy video
-            shutil.copy2(file_path, date_dir)
-            self.log_info(f"Copied video {file_path} to {date_dir}")
-            # Extract screenshots
-            clip = VideoFileClip(str(file_path))
-            duration = int(clip.duration)
-            original_filename = file_path.stem  # Get the base name without extension
-            for t in range(0, duration, self.screencap_interval):
-                if self.shutdown_event.is_set():
-                    self.log_info("Shutdown event detected. Stopping screenshot extraction.")
-                    break
-                try:
-                    frame = clip.get_frame(t)
-                    img = Image.fromarray(frame)
-                    timestamp = datetime.fromtimestamp(t).strftime("%H-%M-%S")
-                    screenshot_filename = f"{original_filename}_screenshot_{timestamp}.jpg"
-                    screenshot_path = screencap_dir / screenshot_filename
-                    img.save(screenshot_path)
-                    self.log_info(f"Saved screenshot {screenshot_path}")
-                except Exception as e:
-                    self.log_error(f"Failed to extract screenshot at {t}s from {file_path}: {e}")
-            clip.reader.close()
-            if clip.audio:
-                clip.audio.reader.close_proc()
-        except Exception as e:
-            self.log_error(f"Failed to process video {file_path}: {e}")
+            self.log_info(f"Connecting to PTP device: {device.device_path}")
+            camera = gp.Camera()
+            camera.init()
 
-    def process_file(self, file_path):
-        """
-        Determine file type and process accordingly.
-        """
-        if file_path.suffix.lower() in self.image_extensions:
-            self.process_image(file_path)
-        elif file_path.suffix.lower() in self.video_extensions:
-            self.process_video(file_path)
-        else:
-            self.log_info(f"Skipping unsupported file type: {file_path}")
+            # List files on the camera
+            files = camera.folder_list_files('/')
+            self.log_info(f"Found {len(files)} files on PTP device.")
 
-    def process_device(self, mount_path):
-        """
-        Process all new files from the mounted device.
-        """
-        self.log_info(f"Starting to process device at {mount_path}")
-        for root, dirs, files in os.walk(mount_path):
             for file in files:
                 if self.shutdown_event.is_set():
-                    self.log_info("Shutdown event detected. Stopping device processing.")
-                    return
-                file_path = Path(root) / file
-                self.process_file(file_path)
-        self.log_info(f"Finished processing device at {mount_path}")
+                    self.log_info("Shutdown event detected. Stopping PTP device processing.")
+                    break
+                filename = file.name
+                target_path = self.incoming_dir / filename
+
+                # Download the file
+                try:
+                    camera_file = camera.file_get('/', filename, gp.GP_FILE_TYPE_NORMAL)
+                    camera_file.save(str(target_path))
+                    self.log_info(f"Downloaded {filename} to {target_path}")
+                except Exception as e:
+                    self.log_error(f"Failed to download {filename}: {e}")
+
+            camera.exit()
+            self.log_info("Completed processing PTP device.")
+        except gp.GPhoto2Error as e:
+            self.log_error(f"GPhoto2 error: {e}")
+        except Exception as e:
+            self.log_error(f"Error processing PTP device: {e}")
+
+    def process_mtp_device(self, device):
+        """
+        Process MTP device: download files using pymtp.
+        """
+        try:
+            self.log_info(f"Connecting to MTP device: {device.device_path}")
+            mtp = pymtp.MTP()
+            mtp.connect()
+
+            # Get all storage IDs
+            storage_ids = mtp.get_storage_ids()
+            self.log_info(f"Found storage IDs: {storage_ids}")
+
+            for storage_id in storage_ids:
+                # Get all objects (files) in storage
+                objects = mtp.get_object_handles(storage_id)
+                self.log_info(f"Found {len(objects)} objects in storage {storage_id}.")
+
+                for obj_handle in objects:
+                    if self.shutdown_event.is_set():
+                        self.log_info("Shutdown event detected. Stopping MTP device processing.")
+                        break
+
+                    obj_info = mtp.get_object_info(obj_handle)
+                    filename = obj_info.get('filename')
+                    if not filename:
+                        continue  # Skip if filename is not available
+
+                    target_path = self.incoming_dir / filename
+
+                    # Download the file
+                    try:
+                        mtp.get_file_to_folder(obj_handle, str(target_path.parent))
+                        self.log_info(f"Downloaded {filename} to {target_path}")
+                    except Exception as e:
+                        self.log_error(f"Failed to download {filename}: {e}")
+
+            mtp.disconnect()
+            self.log_info("Completed processing MTP device.")
+        except pymtp.MTPError as e:
+            self.log_error(f"MTP error: {e}")
+        except Exception as e:
+            self.log_error(f"Error processing MTP device: {e}")
+
+    def process_device(self, device, protocol):
+        """
+        Process all files from the device based on the protocol.
+        """
+        if protocol == 'ptp':
+            self.process_ptp_device(device)
+        elif protocol == 'mtp':
+            self.process_mtp_device(device)
+        else:
+            self.log_error(f"Unsupported protocol '{protocol}' for device {device.device_path}.")
 
     def handle_event(self, device):
         """
@@ -244,26 +237,12 @@ class CameraDaemon:
 
         if action == 'add':
             self.log_info(f"Device added: {device}")
-            if self.is_camera(device):
-                mount_path = self.get_device_mount_path(device)
-                if mount_path and mount_path.exists():
-                    self.log_info(f"Processing device mounted at {mount_path}")
-                    threading.Thread(target=self.process_device, args=(mount_path,)).start()
-                else:
-                    # Wait for automount
-                    self.log_info(f"Mount path for device {device} not found. Waiting for automount...")
-                    for _ in range(10):
-                        if self.shutdown_event.is_set():
-                            self.log_info("Shutdown event detected while waiting for mount. Aborting.")
-                            return
-                        time.sleep(1)
-                        mount_path = self.get_device_mount_path(device)
-                        if mount_path and mount_path.exists():
-                            self.log_info(f"Processing device mounted at {mount_path}")
-                            threading.Thread(target=self.process_device, args=(mount_path,)).start()
-                            break
-                    else:
-                        self.log_error(f"Mount path for device {device} not found after waiting.")
+            protocol = self.is_camera(device)
+            if protocol:
+                self.log_info(f"Device {device.device_path} uses protocol: {protocol}")
+                threading.Thread(target=self.process_device, args=(device, protocol)).start()
+            else:
+                self.log_info(f"Device {device.device_path} is not a supported camera device.")
 
     def device_event_listener(self):
         """
