@@ -1,0 +1,14 @@
+[Unit]
+Description=Camera Monitoring Daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/env python3 /usr/local/bin/camera_daemon.py /etc/camera_daemon/config.ini
+Restart=on-failure
+User=camera_daemon
+Group=camera_daemon
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
