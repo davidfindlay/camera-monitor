@@ -93,6 +93,7 @@ class CameraDaemon:
         Determine if the device is a camera based on ID_MODEL or other properties.
         """
         model = device.get('ID_MODEL', '').lower()
+        self.log_info('Device model: %s' % model)
         return any(keyword in model for keyword in self.camera_models)
 
     def extract_exif_date(self, file_path):
