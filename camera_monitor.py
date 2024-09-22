@@ -90,11 +90,31 @@ class CameraDaemon:
 
     def is_camera(self, device):
         """
-        Determine if the device is a camera based on ID_MODEL or other properties.
+        Determine if the device is a camera based on PTP capability.
         """
-        model = device.get('ID_MODEL', '').lower()
-        self.log_info('Device model: %s' % model)
-        return any(keyword in model for keyword in self.camera_models)
+        # Primary Check: Look for 'ID_PTP_DEVICE' property
+        if 'ID_PTP_DEVICE' in device:
+            self.log_info(f"Device {device.device_path} identified as a PTP device via 'ID_PTP_DEVICE'.")
+            return True
+
+        # Secondary Check: Parse 'ID_USB_INTERFACES' for Image class with PTP protocols
+        if 'ID_USB_INTERFACES' in device:
+            interfaces = device['ID_USB_INTERFACES']
+            # Interfaces are separated by ';'
+            for interface in interfaces.split(';'):
+                # Interface fields are separated by '/'
+                # Example format: ":06/01/02/"
+                parts = interface.split('/')
+                if len(parts) >= 3:
+                    iface_class = parts[0].strip(':')
+                    iface_subclass = parts[1]
+                    iface_protocol = parts[2]
+                    # Image class is 0x06, PTP protocols are 0x01 or 0x02
+                    if iface_class == '06' and iface_protocol in ['01', '02']:
+                        self.log_info(f"Device {device.device_path} identified as a PTP device via USB interfaces.")
+                        return True
+        self.log_info(f"Device {device.device_path} is not identified as a PTP camera.")
+        return False
 
     def extract_exif_date(self, file_path):
         """
