@@ -15,7 +15,6 @@ import exifread
 from moviepy.editor import VideoFileClip
 import pyudev
 import gphoto2 as gp
-import pymtp
 
 class CameraDaemon:
     def __init__(self, config_path):
@@ -169,49 +168,6 @@ class CameraDaemon:
         except Exception as e:
             self.log_error(f"Error processing PTP device: {e}")
 
-    def process_mtp_device(self, device):
-        """
-        Process MTP device: download files using pymtp.
-        """
-        try:
-            self.log_info(f"Connecting to MTP device: {device.device_path}")
-            mtp = pymtp.MTP()
-            mtp.connect()
-
-            # Get all storage IDs
-            storage_ids = mtp.get_storage_ids()
-            self.log_info(f"Found storage IDs: {storage_ids}")
-
-            for storage_id in storage_ids:
-                # Get all objects (files) in storage
-                objects = mtp.get_object_handles(storage_id)
-                self.log_info(f"Found {len(objects)} objects in storage {storage_id}.")
-
-                for obj_handle in objects:
-                    if self.shutdown_event.is_set():
-                        self.log_info("Shutdown event detected. Stopping MTP device processing.")
-                        break
-
-                    obj_info = mtp.get_object_info(obj_handle)
-                    filename = obj_info.get('filename')
-                    if not filename:
-                        continue  # Skip if filename is not available
-
-                    target_path = self.incoming_dir / filename
-
-                    # Download the file
-                    try:
-                        mtp.get_file_to_folder(obj_handle, str(target_path.parent))
-                        self.log_info(f"Downloaded {filename} to {target_path}")
-                    except Exception as e:
-                        self.log_error(f"Failed to download {filename}: {e}")
-
-            mtp.disconnect()
-            self.log_info("Completed processing MTP device.")
-        except pymtp.MTPError as e:
-            self.log_error(f"MTP error: {e}")
-        except Exception as e:
-            self.log_error(f"Error processing MTP device: {e}")
 
     def process_device(self, device, protocol):
         """
@@ -219,8 +175,6 @@ class CameraDaemon:
         """
         if protocol == 'ptp':
             self.process_ptp_device(device)
-        elif protocol == 'mtp':
-            self.process_mtp_device(device)
         else:
             self.log_error(f"Unsupported protocol '{protocol}' for device {device.device_path}.")
 
