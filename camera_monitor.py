@@ -82,37 +82,20 @@ class CameraDaemon:
 
     def is_camera(self, device):
         """
-        Determine if the device is a camera based on PTP or MTP capability.
+        Determine if the device is a camera using libgphoto2.
         Returns:
-            ('ptp') if PTP device,
-            ('mtp') if MTP device,
-            None otherwise.
+            True if the device is a camera, False otherwise.
         """
-        # Primary Check for PTP: Look for 'ID_PTP_DEVICE' property
-        if 'ID_PTP_DEVICE' in device.properties:
-            self.log_info(f"Device {device.device_path} identified as a PTP device via 'ID_PTP_DEVICE'.")
-            return 'ptp'
-
-        # Secondary Check for PTP: Parse 'ID_USB_INTERFACES' for Image class with PTP protocols
-        usb_interfaces = device.properties.get('ID_USB_INTERFACES')
-        if usb_interfaces:
-            # Interfaces are separated by ';'
-            for interface in usb_interfaces.split(';'):
-                # Interface fields are separated by '/'
-                # Example format: ":06/01/02/"
-                parts = interface.split('/')
-                if len(parts) >= 3:
-                    iface_class = parts[0].strip(':')
-                    iface_subclass = parts[1]
-                    iface_protocol = parts[2]
-                    # Image class is 0x06, PTP protocols are 0x01 or 0x02
-                    if iface_class == '06' and iface_protocol in ['01', '02']:
-                        self.log_info(f"Device {device.device_path} identified as a PTP device via USB interfaces.")
-                        return 'ptp'
-
-
-        self.log_info(f"Device {device.device_path} is not identified as a PTP or MTP camera.")
-        return None
+        try:
+            self.log_info(f"Attempting to initialize camera at {device.device_path}")
+            camera = gp.Camera()
+            camera.init()
+            camera.exit()
+            self.log_info(f"Device {device.device_path} is a camera.")
+            return True
+        except gp.GPhoto2Error as e:
+            self.log_info(f"Device {device.device_path} is not a camera: {e}")
+            return False
 
     def process_ptp_device(self, device):
         """
