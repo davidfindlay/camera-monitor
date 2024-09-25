@@ -110,25 +110,6 @@ class CameraDaemon:
                         self.log_info(f"Device {device.device_path} identified as a PTP device via USB interfaces.")
                         return 'ptp'
 
-        # Primary Check for MTP: Look for 'ID_MEDIA_PLAYER' property
-        if 'ID_MEDIA_PLAYER' in device.properties:
-            self.log_info(f"Device {device.device_path} identified as an MTP device via 'ID_MEDIA_PLAYER'.")
-            return 'mtp'
-
-        # Secondary Check for MTP: Parse 'ID_USB_INTERFACES' for Media class with MTP protocols
-        if usb_interfaces:
-            for interface in usb_interfaces.split(';'):
-                # Interface fields are separated by '/'
-                # Example format: ":0E/01/01/"
-                parts = interface.split('/')
-                if len(parts) >= 3:
-                    iface_class = parts[0].strip(':')
-                    iface_subclass = parts[1]
-                    iface_protocol = parts[2]
-                    # Media class is 0x0E, MTP protocols are typically 0x01 or 0x02
-                    if iface_class == '0E' and iface_protocol in ['01', '02']:
-                        self.log_info(f"Device {device.device_path} identified as an MTP device via USB interfaces.")
-                        return 'mtp'
 
         self.log_info(f"Device {device.device_path} is not identified as a PTP or MTP camera.")
         return None
@@ -175,8 +156,6 @@ class CameraDaemon:
         """
         if protocol == 'ptp':
             self.process_ptp_device(device)
-        else:
-            self.log_error(f"Unsupported protocol '{protocol}' for device {device.device_path}.")
 
     def handle_event(self, device):
         """
